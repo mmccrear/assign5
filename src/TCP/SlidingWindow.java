@@ -2,6 +2,8 @@ package TCP;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Vector;
 
 import javax.swing.Timer;
@@ -69,6 +71,7 @@ public class SlidingWindow extends RTDBase {
 		int size;
 		int currentIndex = 0;
 		Packet[] packets;
+		
 		public Window(int size) {
 			this.size=size;
 			base = 0;
@@ -84,12 +87,23 @@ public class SlidingWindow extends RTDBase {
 		synchronized public int getBase() {
 			return base;
 		}
-		synchronized public Packet[] getInWindow() {
-			Packet[] currPackets = new Packet[size];
-			for (int i = 0; i < size; i++) {
-				currPackets[i] = packets[(i+currentIndex)%size];
+		synchronized public Packet[] getInWindow(int top ) {
+			ArrayList<Packet> orderedpackets = new ArrayList<>();
+			int index = currentIndex;
+			while(true){
+				index = (index-1+size)%size;
+				orderedpackets.add(0,packets[index]);
+				if(packets[index].seqnum==top){
+					break;
+				}
 			}
-			return currPackets;
+			
+			Packet[] returnArray = new Packet[orderedpackets.size()];
+			for(int i=0; i<returnArray.length;i++){
+				returnArray[i]=orderedpackets.get(i);
+			}
+			
+			return returnArray;
 		}
 	}
 	
@@ -132,11 +146,11 @@ public class SlidingWindow extends RTDBase {
 		public class TimerAction implements ActionListener {
 			@Override
 			public void actionPerformed(ActionEvent e) {
+				//System.out.println("BLOOOOP GOT LOST");
 				timer.start();
-				for (Packet p : window.getInWindow()) {
-					if (p != null) {
+				for (Packet p : window.getInWindow(nextSeqnum-1)) {
+					    System.out.println("Sending lost packet: " + p.toString());
 						forward.send(p);
-					}
 				}
 			}
 		}
@@ -150,11 +164,16 @@ public class SlidingWindow extends RTDBase {
 				System.out.println("seqnum: " + nextSeqnum);
 				Packet outboundPacket = new Packet(input,nextSeqnum);
 				window.add(outboundPacket);
-				forward.send(outboundPacket);
 				if(window.getBase() == nextSeqnum){
+					System.out.println("getBase == nextSeqnum");
 					timer.start();
 				}
+				System.out.println("nextSeqnum before sending:" + nextSeqnum);
 				nextSeqnum++;
+				System.out.println("nextSeqnum after sending:" + nextSeqnum);
+				 System.out.println("Sending new packet: " + outboundPacket.toString());
+				forward.send(outboundPacket);
+				
 			}
 			else{
 				refuseInput(input);
@@ -166,13 +185,17 @@ public class SlidingWindow extends RTDBase {
 		public int loop(int myState) throws IOException {
 			Packet backwardsPacket = Packet.deserialize(backward.receive());
 			if (!backwardsPacket.isCorrupt()) {
+				 System.out.println("Got an ACK: " + backwardsPacket.toString());
 				window.rebase(backwardsPacket.seqnum+1);
+				System.out.println("Window Base: " + window.getBase() + ", nextseqnum: " + nextSeqnum);
 				if (window.getBase() == nextSeqnum) {
+					System.out.println("Got all packets back...stopping timer.");
 					timer.stop();
-					
+					//window.rebase(backwardsPacket.seqnum+1);
 				} else {
 					timer.start();
 				}
+				
 			}
 			return myState;
 		}
@@ -184,11 +207,20 @@ public class SlidingWindow extends RTDBase {
 		public int loop(int myState) throws IOException {
 			Packet forwardsPacket = Packet.deserialize(forward.receive());
 			if (!forwardsPacket.isCorrupt() && (forwardsPacket.seqnum == expectedseqnum)) {
+				System.out.println("GOT A GOOD PACKET");
 				Packet ackPacket = new Packet("ACK", expectedseqnum);
+				 System.out.println("Sending an ACK: " + ackPacket.toString());
 				backward.send(ackPacket);
 				deliverToApp(forwardsPacket.data);
 				expectedseqnum++;
+				return myState;
 			}
+			System.out.println("GOT A BAD PACKET");
+			
+			Packet ackPacket = new Packet("ACK", expectedseqnum-1);
+			 System.out.println("Sending an ACK: " + ackPacket.toString());
+			backward.send(ackPacket);
+			
 			return myState;			
 		}
 	}
