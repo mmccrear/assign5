@@ -146,10 +146,10 @@ public class SlidingWindow extends RTDBase {
 		public class TimerAction implements ActionListener {
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				//System.out.println("BLOOOOP GOT LOST");
+				System.out.println("  **Sender: timeout; resending from " + window.getBase() + "**");
 				timer.start();
 				for (Packet p : window.getInWindow(nextSeqnum-1)) {
-					    System.out.println("Sending lost packet: " + p.toString());
+					    System.out.println("  **Resending " + p.toString());
 						forward.send(p);
 				}
 			}
@@ -158,20 +158,14 @@ public class SlidingWindow extends RTDBase {
 // Input Thread
 		public void loop1() throws IOException {
 			String input = getFromApp(0);
-			System.out.println("base: " + window.getBase());
 			if(nextSeqnum < window.getBase()+N){
-				System.out.println("input: " + input);
-				System.out.println("seqnum: " + nextSeqnum);
 				Packet outboundPacket = new Packet(input,nextSeqnum);
 				window.add(outboundPacket);
 				if(window.getBase() == nextSeqnum){
-					System.out.println("getBase == nextSeqnum");
 					timer.start();
 				}
-				System.out.println("nextSeqnum before sending:" + nextSeqnum);
 				nextSeqnum++;
-				System.out.println("nextSeqnum after sending:" + nextSeqnum);
-				 System.out.println("Sending new packet: " + outboundPacket.toString());
+				System.out.println("Sender: Sending: " + outboundPacket.toString());
 				forward.send(outboundPacket);
 				
 			}
@@ -185,11 +179,9 @@ public class SlidingWindow extends RTDBase {
 		public int loop(int myState) throws IOException {
 			Packet backwardsPacket = Packet.deserialize(backward.receive());
 			if (!backwardsPacket.isCorrupt()) {
-				 System.out.println("Got an ACK: " + backwardsPacket.toString());
 				window.rebase(backwardsPacket.seqnum+1);
-				System.out.println("Window Base: " + window.getBase() + ", nextseqnum: " + nextSeqnum);
+				System.out.println("  **Sender: noncorrupt ack; base = " + window.getBase() + "**");
 				if (window.getBase() == nextSeqnum) {
-					System.out.println("Got all packets back...stopping timer.");
 					timer.stop();
 					//window.rebase(backwardsPacket.seqnum+1);
 				} else {
@@ -206,19 +198,28 @@ public class SlidingWindow extends RTDBase {
 		@Override
 		public int loop(int myState) throws IOException {
 			Packet forwardsPacket = Packet.deserialize(forward.receive());
+			System.out.println("\t**Receiver: " + forwardsPacket.toString() + "**");
 			if (!forwardsPacket.isCorrupt() && (forwardsPacket.seqnum == expectedseqnum)) {
-				System.out.println("GOT A GOOD PACKET");
+				//System.out.println("GOT A GOOD PACKET");
 				Packet ackPacket = new Packet("ACK", expectedseqnum);
-				 System.out.println("Sending an ACK: " + ackPacket.toString());
+				System.out.println("\t**Receiver: ok " + expectedseqnum + " data; replying " + ackPacket.toString());
 				backward.send(ackPacket);
 				deliverToApp(forwardsPacket.data);
 				expectedseqnum++;
 				return myState;
 			}
-			System.out.println("GOT A BAD PACKET");
-			
+						
 			Packet ackPacket = new Packet("ACK", expectedseqnum-1);
-			 System.out.println("Sending an ACK: " + ackPacket.toString());
+			
+			// received a duplicate packet
+			if (forwardsPacket.seqnum != expectedseqnum) {
+				System.out.println("\t**Receiver: duplicate " + forwardsPacket.seqnum + 
+									" packet; discarding; replying " +  ackPacket.toString() + "**");
+			} else {
+				// packet was corrupt
+				System.out.println("\t**Receiver: corrupt data; replying " + ackPacket.toString() + "**");
+			}
+			
 			backward.send(ackPacket);
 			
 			return myState;			
